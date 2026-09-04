@@ -1,4 +1,4 @@
-# Comparison of the monodomain and bidomain models in 2D with a vessel
+# Comparison of the monodomain and bidomain models
 
 This directory contains the final code and archived data used to generate the
 two new figures prepared for the revision of *Multi-Vector Low-Energy Cardiac
