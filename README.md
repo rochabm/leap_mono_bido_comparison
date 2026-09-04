@@ -1,8 +1,8 @@
-# Corrected 2-D monodomain--bidomain comparison
+# Comparison of the monodomain and bidomain models in 2D with a vessel
 
 This directory contains the final code and archived data used to generate the
 two new figures prepared for the revision of *Multi-Vector Low-Energy Cardiac
-Stimulation Recruits Direction-Dependent Vascular and Boundary Hotspots*.
+Stimulation Recruits Direction-Dependent Vascular and Boundary Hotspots* (under review).
 
 ## Definitive execution files
 
@@ -10,17 +10,14 @@ Stimulation Recruits Direction-Dependent Vascular and Boundary Hotspots*.
   actually executed to generate the corrected field sweep, the four
   activation-time maps at 0.5 V/cm, and the activation-time-versus-field
   figure.
+- `run_monobido_2d_fenicsx.py` is the corresponding DOLFINx version.
+  It is included as the corrected reference implementation, but the supplied
+  numerical results were generated with the scikit-fem driver because DOLFINx
+  was unavailable in the execution environment.
 - `tnnp2006.py` implements the ten Tusscher--Panfilov 2006 ventricular ionic
   model used by the execution driver.
 - `plot_acttime.py` reads the archived activation maps and generated the final
   2 x 2 activation-map figure.
-- `multivector_bidomain_2d_corrected.py` is the corresponding DOLFINx version.
-  It is included as the corrected reference implementation, but the supplied
-  numerical results were generated with the scikit-fem driver because DOLFINx
-  was unavailable in the execution environment.
-
-The older standalone `plot_tau_vs_E.py` is deliberately not included because
-it contained hard-coded results from an earlier, superseded run.
 
 ## Reproduce the simulations and both figures
 
@@ -36,7 +33,7 @@ Run the complete corrected sweep:
 python run_corrected_skfem.py
 ```
 
-This writes the results to `out_corrected/`, including
+This writes the results to `outputs/`, including
 `corrected_results.csv`, the four compressed activation maps, the mesh, and
 `figure_tau_vs_E_corrected.{pdf,png}`. It also writes the earlier horizontal
 four-panel version of the activation maps.
