@@ -32,7 +32,7 @@ import tnnp2006 as ion
 
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE / "out_corrected"
+OUT = HERE / "outputs"
 OUT.mkdir(exist_ok=True)
 
 # Geometry and protocol (identical to the supplied final-mode experiment).

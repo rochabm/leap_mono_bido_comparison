@@ -4,18 +4,11 @@
  2D ventricular-slab-with-vessels proof-of-concept
 ============================================================================
 
-Purpose
--------
-Answer the editor's / Reviewer 2's concern: does the direction-dependent
-recruitment reported in the paper (using an ISOTROPIC MONODOMAIN with a
-field-projection boundary condition) survive when the shock is instead
-represented with a BIDOMAIN model that has UNEQUAL ANISOTROPY RATIOS -- the
-mechanism (bulk virtual electrodes / sawtooth) that a monodomain cannot
-produce?
-
-The paper's claims are all RELATIVE (four directions beat one; different
-directions recruit complementary sites). So we test whether the ORDERING
-and the DIRECTION-DEPENDENCE are preserved, not absolute agreement.
+Comparison of monodomain and bidomain models
+- monodomain isotropic
+- monodomain anisotropic
+- bidomain anisotropic (equal anisotropy ratio)
+- bidomain anisotropic (unequal anisotropy ratio)
 
 What this script does
 ---------------------
@@ -37,13 +30,6 @@ What this script does
 Runs on YOUR machine (needs dolfinx + gmsh). Not runnable in the assistant
 environment. Tested components: the TNNP ODE port (see tnnp2006.py).
 
-----------------------------------------------------------------------------
-IMPORTANT KNOBS TO MATCH CARDIAX  (search "MATCH:")
-----------------------------------------------------------------------------
-  chi (surface-to-volume), Cm, timestep, sigma values, field coefficient.
-  Defaults below use a standard cardiac convention (cm, ms, mV, mS/cm,
-  uF/cm^2). The relative comparison is robust to the exact numbers, but for
-  a like-for-like monodomain baseline set these to your .par/.xml values.
 ============================================================================
 """
 
@@ -249,9 +235,6 @@ MESH_H  = 200.0     # target element size [um] (~0.02 cm)
 #
 # To disable anisotropy entirely, keep sigma_l == sigma_t (then f is irrelevant).
 FIBER_MODE      = "fixed"    # "rotating", "fixed", or "vessel"
-# For the Case A/C comparison use "fixed" at 45 deg (fibres oblique to the +x
-# field, uniform). ("vessel" curves fibres around holes -- for the VE sweep;
-# "rotating" is transmural rotation.)
 FIBER_FIXED_DEG = 45.0        # uniform fiber angle [deg] when FIBER_MODE=="fixed"
 
 # fiber rotation (used when FIBER_MODE == "rotating"):
@@ -260,12 +243,11 @@ FIB_ENDO_DEG = +60.0
 FIB_EPI_DEG  = -60.0
 
 # --- diffusion time grouping (computed once) ---
-#   DIFF = dt / (beta * Cm)   [replaces Cardiax dtkappa; numerically identical]
 DIFF = DT / (BETA * CM)
 
 
 # ===========================================================================
-# 1.  MESH GENERATION  (gmsh -> dolfinx)
+# MESH GENERATION  (gmsh -> dolfinx)
 # ===========================================================================
 
 def build_mesh():
@@ -409,7 +391,7 @@ def read_msh_fallback(path):
 
 
 # ===========================================================================
-# 2.  FIBER FIELD + CONDUCTIVITY TENSORS
+# FIBER FIELD + CONDUCTIVITY TENSORS
 # ===========================================================================
 
 def fiber_angle(x):
@@ -486,7 +468,7 @@ def conductivity_tensor(domain, sigma_l, sigma_t):
 
 
 # ===========================================================================
-# 3.  FIELD DIRECTION HELPERS  (matches Cardiax set_field_direction)
+# FIELD DIRECTION HELPERS  (matches Cardiax set_field_direction)
 # ===========================================================================
 
 def dir_vec(ch):
@@ -526,7 +508,7 @@ def stim_ds(domain, facet_tags):
 
 
 # ===========================================================================
-# 4.  MONODOMAIN SOLVER
+# MONODOMAIN SOLVER
 # ===========================================================================
 
 def run_monodomain(domain, facet_tags, sigma_fun, field_amp, seq, label,
@@ -682,7 +664,7 @@ def run_monodomain(domain, facet_tags, sigma_fun, field_amp, seq, label,
 
 
 # ===========================================================================
-# 5.  BIDOMAIN SOLVER (phi_e-coupled)
+# BIDOMAIN SOLVER (phi_e-coupled)
 # ===========================================================================
 
 def run_bidomain(domain, facet_tags, field_amp, seq, label, record_every=0,
@@ -890,7 +872,7 @@ def run_bidomain(domain, facet_tags, field_amp, seq, label, record_every=0,
 
 
 # ===========================================================================
-# 6.  DRIVER
+# DRIVER
 # ===========================================================================
 
 def _ensure_outdir():
@@ -909,65 +891,6 @@ def save_field(domain, arr, name):
     with dolfinx.io.XDMFFile(comm, f"{OUTDIR}/{name}.xdmf", "w") as xf:
         xf.write_mesh(domain)
         xf.write_function(f)
-
-def verify(domain, facet_tags):
-    """Acceptance test for the FAITHFUL replica (no gain to tune).
-    Runs monodomain, fa=0.05 mV/um (=0.5 V/cm), +x, field on both boundary and
-    vessels (STIM_TARGET), and reports tau + peakV. If the replica is correct,
-    the tissue should ACTIVATE at 0.5 V/cm (as Cardiax does) with a physiological
-    peakV ~ +40 mV and a tau in the tens-of-ms range comparable to Cardiax.
-
-    Usage:  python multivector_bidomain_2d.py verify
-    """
-    sig_mono = conductivity_tensor(domain, SIGMA_MONO_L, SIGMA_MONO_T)
-    if comm.rank == 0:
-        print("\n=== FAITHFUL-REPLICA VERIFICATION ===")
-        print(f"fa = {FIELD_AMP['0.5']} mV/um = 0.5 V/cm ,  +x , "
-              f"STIM_TARGET={STIM_TARGET}")
-        print(f"DIFF = {DIFF:.4e} , theta = {THETA} , dt = {DT} ms")
-        print("Expect: tissue ACTIVATES, peakV ~ +40 mV, tau in tens of ms.\n")
-    run_monodomain(domain, facet_tags, sig_mono, FIELD_AMP["0.5"], SEQ_1DIR,
-                   "verify", record_every=25)
-
-
-def run_recruitment(domain, facet_tags, model="mono"):
-    """Reproduce the paper's Fig.10-style experiment: apply a SHORT pulse to the
-    arterial-tree interface in each single direction separately, and record the
-    activation-time map. Different directions recruit different vessel regions.
-    Writes acttime_recruit_<model>_<dir>.xdmf for X,x,Y,y and a combined
-    'earliest activation across directions' map. Open all in ParaView.
-
-    This is the direct 2D analogue of Fig.10 (a-e) and is the figure that
-    answers the reviewer for BOTH models when run with model='mono' and 'bido'.
-    """
-    sig_mono = conductivity_tensor(domain, SIGMA_MONO_L, SIGMA_MONO_T)
-    # (direction char for the solver, unambiguous name for filenames)
-    dirs = [("X", "posX"), ("x", "negX"), ("Y", "posY"), ("y", "negY")]
-    maps = {}
-    for dch, dname in dirs:
-        lab = f"recruit_{model}_{dname}"
-        if model == "mono":
-            at, tau, fr, ok, _ = run_monodomain(domain, facet_tags, sig_mono,
-                                             FIELD_AMP["0.5"], [dch], lab, record_every=25)
-        else:
-            at, tau, fr, ok, _ = run_bidomain(domain, facet_tags,
-                                           FIELD_AMP["0.5"], [dch], lab, record_every=25)
-        save_field(domain, at, f"acttime_{lab}")
-        maps[dname] = at
-        if comm.rank == 0:
-            frac = 100.0*np.mean(~np.isnan(at))
-            print(f"  [{model} recruit {dname}] recruited {frac:.1f}% of tissue")
-
-    # combined: earliest activation time across the four directions
-    stack = np.vstack([np.nan_to_num(maps[dn], nan=np.inf) for _, dn in dirs])
-    combined = np.min(stack, axis=0)
-    combined[np.isinf(combined)] = np.nan
-    save_field(domain, combined, f"acttime_recruit_{model}_combined")
-    if comm.rank == 0:
-        union = 100.0*np.mean(~np.isnan(combined))
-        print(f"  [{model} recruit] UNION of all 4 directions recruited "
-              f"{union:.1f}% of tissue (vs each single direction alone)")
-
 
 def run_sweep(domain, facet_tags):
     """Field-strength sweep comparing THREE cases at each field:
@@ -1047,94 +970,6 @@ def run_sweep(domain, facet_tags):
                   f"{cell(t3,f3,ok3):>13}")
         print("\nActivation-time maps written as acttime_sweep_*_<E>Vcm.xdmf "
               "(one per case per field).")
-
-
-# def run_final(domain, facet_tags):
-#     """FINAL comparison: run all FOUR cases in one session, under IDENTICAL
-#     conditions (same mesh, field, timing, GEOM_2D_FACTOR, fibres), so the panel
-#     is a controlled comparison. Conductivities are fixed here explicitly and do
-#     NOT depend on the CASE / ANISOTROPY_ON flags.
-
-#         1. mono-iso        : isotropic monodomain, sigma = 0.002 (mean of L,T)
-#         2. mono-aniso      : Roth anisotropic monodomain (sig_mL, sig_mT)
-#         3. bido-equal      : equal-ratio bidomain  (reduces to mono-aniso; ~1%)
-#         4. bido-unequal    : unequal-ratio Roth bidomain (the physics)
-
-#     All bidomain conductivities share the SAME per-axis harmonic means as
-#     mono-aniso, so cases 2,3,4 have matched effective L/T conductivities and
-#     differ only in the intra/extra anisotropy split.
-
-#     Field: 0.5 V/cm, +x, applied for T_FIELD ms to STIM_TARGET; simulate to
-#     T_TOTAL. Vm (and phi_e) time series + end-of-shock snapshot + activation map
-#     are written to out_final/ for each case.
-
-#     Usage:  python multivector_bidomain_2d.py final
-#     """
-#     global OUTDIR
-#     OUTDIR = "out_final"
-
-#     # --- fixed conductivities (independent of CASE flag) [mS/um] ---
-#     MONO_ISO   = (0.0002, 0.0002)
-#     MONO_ANISO = (0.00034483, 0.00005517)
-#     BIDO_EQUAL   = dict(iL=0.00068966, iT=0.00011034, eL=0.00068966, eT=0.00011034)
-#     BIDO_UNEQUAL = dict(iL=0.00068966, iT=0.00006897, eL=0.00068966, eT=0.00027586)
-
-#     fa = FIELD_AMP["0.5"]          # 0.5 V/cm
-#     REC = 4                        # Vm/phi_e frame every REC steps
-
-#     if comm.rank == 0:
-#         print("\n=== FINAL 4-CASE COMPARISON (identical conditions) ===")
-#         print(f"  field 0.5 V/cm (+x), T_FIELD={T_FIELD} ms, T_TOTAL={T_TOTAL} ms,")
-#         print(f"  GEOM_2D_FACTOR={GEOM_2D_FACTOR}, dt={DT}, FIBER_MODE={FIBER_MODE}, "
-#               f"STIM_TARGET={STIM_TARGET}")
-#         print(f"  outputs -> {OUTDIR}/\n")
-
-#     results = {}
-
-#     sig1 = conductivity_tensor(domain, *MONO_ISO)
-#     at, tau, fr, ok, snap = run_monodomain(domain, facet_tags, sig1, fa, SEQ_1DIR,
-#                                            "final_mono_iso", record_every=REC,
-#                                            snapshot_at=T_FIELD)
-#     save_field(domain, at, "acttime_final_mono_iso")
-#     if snap is not None: save_field(domain, snap, "vmShock_final_mono_iso")
-#     results["mono-iso"] = (tau, fr, ok)
-
-#     sig2 = conductivity_tensor(domain, *MONO_ANISO)
-#     at, tau, fr, ok, snap = run_monodomain(domain, facet_tags, sig2, fa, SEQ_1DIR,
-#                                            "final_mono_aniso", record_every=REC,
-#                                            snapshot_at=T_FIELD)
-#     save_field(domain, at, "acttime_final_mono_aniso")
-#     if snap is not None: save_field(domain, snap, "vmShock_final_mono_aniso")
-#     results["mono-aniso"] = (tau, fr, ok)
-
-#     at, tau, fr, ok, snap = run_bidomain(domain, facet_tags, fa, SEQ_1DIR,
-#                                          "final_bido_equal", record_every=REC,
-#                                          snapshot_at=T_FIELD, sigmas=BIDO_EQUAL)
-#     save_field(domain, at, "acttime_final_bido_equal")
-#     if snap is not None: save_field(domain, snap, "vmShock_final_bido_equal")
-#     results["bido-equal"] = (tau, fr, ok)
-
-#     at, tau, fr, ok, snap = run_bidomain(domain, facet_tags, fa, SEQ_1DIR,
-#                                          "final_bido_unequal", record_every=REC,
-#                                          snapshot_at=T_FIELD, sigmas=BIDO_UNEQUAL)
-#     save_field(domain, at, "acttime_final_bido_unequal")
-#     if snap is not None: save_field(domain, snap, "vmShock_final_bido_unequal")
-#     results["bido-unequal"] = (tau, fr, ok)
-
-#     if comm.rank == 0:
-#         print("\n==================== FINAL SUMMARY ====================")
-#         print(f"{'case':>14} | {'tau[ms]':>9} | {'activated%':>10}")
-#         print("-"*42)
-#         for k, (tau, fr, ok) in results.items():
-#             taus = f"{tau:.2f}" if ok else "  n/a"
-#             print(f"{k:>14} | {taus:>9} | {100*fr:>9.1f}%")
-#         print(f"\nPer-case outputs in {OUTDIR}/:")
-#         print("  vmShock_final_<case>.xdmf   (Vm at end of shock, t=T_FIELD)")
-#         print("  vm_{mono,bido}_final_<case>.xdmf  (Vm time series)")
-#         print("  phie_bido_final_<case>.xdmf (phi_e time series, bidomain)")
-#         print("  acttime_final_<case>.xdmf   (activation-time map)")
-#         print("\nNote: mono-aniso and bido-equal should closely match (~1%);")
-#         print("bido-unequal is the physics test (no monodomain equivalent).")
 
 def run_final(domain, facet_tags):
     """FINAL comparison across a field sweep: run all FOUR cases at each field
@@ -1244,25 +1079,12 @@ def main():
     import sys
     domain, cell_tags, facet_tags = build_mesh()
 
-    if len(sys.argv) > 1 and sys.argv[1] == "verify":
-        verify(domain, facet_tags)
-        return
-
     if len(sys.argv) > 1 and sys.argv[1] == "final":
         run_final(domain, facet_tags)
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "sweep":
         run_sweep(domain, facet_tags)
-        return
-
-    if len(sys.argv) > 1 and sys.argv[1] == "recruit":
-        # Fig.10-style per-direction vessel recruitment, both models.
-        if comm.rank == 0:
-            print(f"\n=== RECRUITMENT (Fig.10-style)  STIM_TARGET={STIM_TARGET}, "
-                  f"pulse={T_FIELD_PULSE} ms ===")
-        run_recruitment(domain, facet_tags, "mono")
-        run_recruitment(domain, facet_tags, "bido")
         return
 
     # record_every: write a Vm frame every N steps for ParaView (0 = off).
